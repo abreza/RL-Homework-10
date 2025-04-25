@@ -388,6 +388,8 @@ class BaseDQNAgent:
         """
 
         reward = self._reward_transformation(reward)
+        state = self._state_transformation(state)
+        next_state = self._state_transformation(next_state)
 
         state = torch.tensor(state, dtype=torch.float32, device=self.device)
         action = torch.tensor(action, dtype=torch.long, device=self.device)
@@ -487,3 +489,18 @@ class BaseDQNAgent:
         Transform the reward to a suitable range.
         """
         return reward
+
+    def _state_transformation(self, state):
+        """
+        Preprocess state
+        """
+        low = self.env.observation_space.low
+        high = self.env.observation_space.high
+
+        # Avoid division by zero if high == low
+        scale = high - low
+        scale[scale == 0] = 1.0
+
+        # Scale state to [-1, 1]
+        standardized_state = 2 * ((state - low) / scale) - 1
+        return standardized_state
