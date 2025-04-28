@@ -70,3 +70,27 @@ def set_seed(seed: int) -> None:
         # Ensure deterministic behavior for cuDNN
         # torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
+def calc_running_statistics(
+    data: torch.Tensor,
+    running_mean: torch.Tensor,
+    running_m2: torch.Tensor,
+    count: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Calculate running mean and variance.
+    Args:
+        data (torch.Tensor): The new data point.
+        running_mean (torch.Tensor): The current running mean.
+        running_var (torch.Tensor): The current running variance.
+        count (int): The number of data points seen so far.
+    Returns:
+        tuple: Updated running mean and variance and m2.
+    """
+    delta = data - running_mean
+    running_mean += delta / count
+    delta2 = data - running_mean
+    running_m2 += delta * delta2
+    var = running_m2 / (count - 1) if count > 1 else torch.zeros_like(running_m2)
+    return running_mean, var, running_m2

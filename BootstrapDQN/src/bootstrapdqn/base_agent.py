@@ -10,7 +10,7 @@ import wandb
 
 from .replay_buffer import ReplayBuffer
 from .wrappers import FFmpegVideoRecorder
-from .utils import set_seed
+from .utils import set_seed, calc_running_statistics
 import random
 
 
@@ -30,6 +30,8 @@ class BaseDQNAgent:
         seed: int = 42,
         gradient_norm_clip: Union[float, None] = None,
         start_training_after: int = 1000,
+        clip_rewards: Union[float, None] = 10,
+        normalize_rewards: bool = True,
     ):
         set_seed(seed)
 
@@ -50,13 +52,23 @@ class BaseDQNAgent:
         self.log_index = log_index
         self.gradient_norm_clip = gradient_norm_clip
         self.start_training_after = start_training_after
+        self.clip_rewards = clip_rewards
+        self._norm_rew = normalize_rewards
 
         self._training_step = 0
         self._training_episode = 0
         self._cur_rollout_step = 0
         self._total_steps = 0
 
+        self._obs_mean = torch.zeros(self.env.observation_space.shape, device=self.device, requires_grad=False)
+        self._obs_var = torch.ones(self.env.observation_space.shape, device=self.device, requires_grad=False)
+        self._obs_m2 = torch.zeros(self.env.observation_space.shape, device=self.device, requires_grad=False)
+        self._ret_mean = torch.zeros((1,), device=self.device, requires_grad=False)
+        self._ret_var = torch.ones((1,), device=self.device, requires_grad=False)
+        self._ret_m2 = torch.zeros((1,), device=self.device, requires_grad=False)
+
         self._actions = []
+        self._rewards = []
 
         self._create_replay_buffer(replay_buffer_capacity)
 
@@ -75,7 +87,7 @@ class BaseDQNAgent:
         self.target_network.eval()
         self._loss = 0
         self._episode_loss = 0
-        self._episode_reward = 0
+        self._rewards.clear()
         self._cur_rollout_step = 0
         self._actions.clear()
 
@@ -87,7 +99,7 @@ class BaseDQNAgent:
         self.q_network.train()
         self._loss = 0
         self._episode_loss = 0
-        self._episode_reward = 0
+        self._rewards.clear()
         self._cur_rollout_step = 0
 
     def add_experience(self, state, action, reward, next_state, done):
@@ -104,8 +116,15 @@ class BaseDQNAgent:
         Args:
             state (np.ndarray): The current state.
         """
+        state = self._state_transformation(state)
         if self.training:
             self._training_step += 1
+            self._obs_mean, self._obs_var, self._obs_m2 = calc_running_statistics(
+                torch.tensor(state, device=self.device),
+                self._obs_mean,
+                self._obs_m2,
+                self._training_step,
+            )
             action = self._act_in_training(state)
         else:
             action = self._act_in_eval(state)
@@ -115,7 +134,7 @@ class BaseDQNAgent:
         """
         Step the agent with the given reward.
         """
-        self._episode_reward += reward
+        self._rewards.append(reward)
         self._cur_rollout_step += 1
         self._total_steps += 1
 
@@ -133,10 +152,21 @@ class BaseDQNAgent:
                 raise ValueError(f"Invalid log index {self.log_index}. Use 'step' or 'episode'.")
 
         self._episode_loss = 0
-        self._episode_reward = 0
         self._cur_rollout_step = 0
         self._training_episode += 1
+        ret = torch.zeros(1, device=self.device, requires_grad=False)
+        if self.training:
+            for reward in self._rewards[::-1]:
+                ret = self.gamma * ret + reward
 
+            self._ret_mean, self._ret_var, self._ret_m2 = calc_running_statistics(
+                ret,
+                self._ret_mean,
+                self._ret_m2,
+                self._training_episode,
+            )
+
+        self._rewards.clear()
         self._actions.clear()
 
     def learn(self, batch_size=None):
@@ -154,6 +184,8 @@ class BaseDQNAgent:
             return
 
         batch = self.replay_buffer.sample(batch_size)
+        if self._norm_rew:
+            batch["reward"] = self._normalize_reward(batch["reward"])
         loss = self._compute_loss(batch)
         self.optimizer.zero_grad()
         loss.backward()
@@ -387,7 +419,6 @@ class BaseDQNAgent:
             dict: A dictionary containing the preprocessed experience.
         """
 
-        reward = self._reward_transformation(reward)
         state = self._state_transformation(state)
         next_state = self._state_transformation(next_state)
 
@@ -428,10 +459,12 @@ class BaseDQNAgent:
         """
         return {
             "train_episode/sum_loss": self._episode_loss,
-            "train_episode/sum_reward": self._episode_reward,
+            "train_episode/sum_reward": sum(self._rewards),
             "train_episode/episode_length": self._cur_rollout_step,
-            "train_episode/mean_reward": self._episode_reward / self._cur_rollout_step,
+            "train_episode/mean_reward": sum(self._rewards) / self._cur_rollout_step,
             "train_episode/mean_loss": self._episode_loss / self._cur_rollout_step,
+            "train_episode/mean_return": self._ret_mean.item(),
+            "train_episode/var_return": self._ret_var.item(),
         }
 
     def _wandb_eval_dict(self):
@@ -439,9 +472,9 @@ class BaseDQNAgent:
         Create a dictionary for logging the evaluation.
         """
         return {
-            "eval_episode/sum_reward": self._episode_reward,
+            "eval_episode/sum_reward": sum(self._rewards),
             "eval_episode/episode_length": self._cur_rollout_step,
-            "eval_episode/mean_reward": self._episode_reward / self._cur_rollout_step,
+            "eval_episode/mean_reward": sum(self._rewards) / self._cur_rollout_step,
             "eval_episode/action_histogram": wandb.Histogram(self._actions),
             "eval_video/video": wandb.Video(self.eval_env.get_path(), format="mp4"),
         }
@@ -484,12 +517,6 @@ class BaseDQNAgent:
         }
         return save_dict
 
-    def _reward_transformation(self, reward):
-        """
-        Transform the reward to a suitable range.
-        """
-        return reward
-
     def _state_transformation(self, state):
         """
         Preprocess state
@@ -503,4 +530,17 @@ class BaseDQNAgent:
 
         # Scale state to [-1, 1]
         standardized_state = 2 * ((state - low) / scale) - 1
+        standardized_state = torch.tensor(standardized_state, dtype=torch.float32, device=self.device)
         return standardized_state
+
+    def _normalize_reward(self, rewards):
+        """
+        Normalize the reward.
+        """
+        if not self._norm_rew:
+            return rewards
+
+        rewards = (rewards) / torch.sqrt(self._ret_var + 1e-8)
+        if self.clip_rewards is not None:
+            rewards = torch.clip(rewards, -self.clip_rewards, self.clip_rewards)
+        return rewards

@@ -16,7 +16,8 @@ class ReplayBuffer:
         self.size = 0
         self.elements = elements
         self.buffer = {
-            name: torch.zeros((max_size, *shape), dtype=dtype, device=device) for name, shape, dtype in elements
+            name: torch.zeros((max_size, *shape), dtype=dtype, device=device, requires_grad=False)
+            for name, shape, dtype in elements
         }
         self.index = 0
         self.device = device
