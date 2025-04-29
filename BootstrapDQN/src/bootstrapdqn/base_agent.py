@@ -32,6 +32,7 @@ class BaseDQNAgent:
         start_training_after: int = 1000,
         clip_rewards: Union[float, None] = 10,
         normalize_rewards: bool = True,
+        scale_rewards: Union[float, None] = None,
     ):
         set_seed(seed)
 
@@ -54,6 +55,7 @@ class BaseDQNAgent:
         self.start_training_after = start_training_after
         self.clip_rewards = clip_rewards
         self._norm_rew = normalize_rewards
+        self._scale_rew = scale_rewards
 
         self._training_step = 0
         self._training_episode = 0
@@ -157,7 +159,7 @@ class BaseDQNAgent:
         ret = torch.zeros(1, device=self.device, requires_grad=False)
         if self.training:
             for reward in self._rewards[::-1]:
-                ret = self.gamma * ret + reward
+                ret = self.gamma * ret + self._scale_reward(reward)
 
             self._ret_mean, self._ret_var, self._ret_m2 = calc_running_statistics(
                 ret,
@@ -188,9 +190,17 @@ class BaseDQNAgent:
             batch["reward"] = self._normalize_reward(batch["reward"])
         loss = self._compute_loss(batch)
         self.optimizer.zero_grad()
+
         loss.backward()
         if self.gradient_norm_clip is not None:
             torch.nn.utils.clip_grad_norm_(self._learnable_parameters(), self.gradient_norm_clip)
+
+        self.grad_norm = 0
+        for param in self._learnable_parameters():
+            if param.grad is not None:
+                self.grad_norm += param.grad.detach().data.norm(2).item() ** 2.0
+        self.grad_norm = self.grad_norm ** (1.0 / 2.0)
+
         self.optimizer.step()
         self._soft_update_target_network()
 
@@ -451,7 +461,7 @@ class BaseDQNAgent:
         """
         Create a dictionary for logging the training step.
         """
-        return {"train_step/loss": self._loss}
+        return {"train_step/loss": self._loss, "train_step/grad_norm": self.grad_norm}
 
     def _wandb_train_episode_dict(self):
         """
@@ -495,6 +505,16 @@ class BaseDQNAgent:
             "_cur_rollout_step": self._cur_rollout_step,
             "_total_steps": self._total_steps,
             "optimizer": self.optimizer.state_dict(),
+            "_obs_mean": self._obs_mean.cpu(),
+            "_obs_var": self._obs_var.cpu(),
+            "_obs_m2": self._obs_m2.cpu(),
+            "_ret_mean": self._ret_mean.cpu(),
+            "_ret_var": self._ret_var.cpu(),
+            "_ret_m2": self._ret_m2.cpu(),
+            "_scale_rew": self._scale_rew,
+            "_norm_rew": self._norm_rew,
+            "clip_rewards": self.clip_rewards,
+            "gradient_norm_clip": self.gradient_norm_clip,
         }
 
         save_dict["networks"] = {}
@@ -533,10 +553,16 @@ class BaseDQNAgent:
         standardized_state = torch.tensor(standardized_state, dtype=torch.float32, device=self.device)
         return standardized_state
 
+    def _scale_reward(self, rewards):
+        if self._scale_rew is not None:
+            rewards = rewards / self._scale_rew
+        return rewards
+
     def _normalize_reward(self, rewards):
         """
         Normalize the reward.
         """
+        rewards = self._scale_reward(rewards)
         if not self._norm_rew:
             return rewards
 
