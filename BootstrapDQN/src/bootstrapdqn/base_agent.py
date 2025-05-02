@@ -1,3 +1,4 @@
+import random
 import time
 from pathlib import Path
 from typing import Union
@@ -5,13 +6,14 @@ from typing import Union
 import gymnasium as gym
 import numpy as np
 import torch
+from gymnasium.envs.toy_text.frozen_lake import generate_random_map
+from gymnasium.wrappers import FlattenObservation
 
 import wandb
 
 from .replay_buffer import ReplayBuffer
+from .utils import calc_running_statistics, set_seed
 from .wrappers import FFmpegVideoRecorder
-from .utils import set_seed, calc_running_statistics
-import random
 
 
 class BaseDQNAgent:
@@ -36,13 +38,24 @@ class BaseDQNAgent:
     ):
         set_seed(seed)
 
-        self.env = gym.make(env_name)
-
         self.video_log_path = Path(video_log_path_dir)
         self.video_log_path.mkdir(parents=True, exist_ok=True)
-        self.eval_env = FFmpegVideoRecorder(
-            gym.make(env_name, render_mode="rgb_array"), video_folder=str(self.video_log_path.resolve())
-        )
+
+        if env_name == "FrozenLake-v1":
+            desc = generate_random_map(size=16, seed=seed)
+            self.env = FlattenObservation(gym.make(env_name, desc=desc, map_name="8x8"))
+            self.eval_env = FFmpegVideoRecorder(
+                FlattenObservation(gym.make(env_name, desc=desc, map_name="8x8", render_mode="rgb_array")),
+                video_folder=str(self.video_log_path.resolve()),
+                fps=4,
+            )
+        else:
+            self.env = FlattenObservation(gym.make(env_name))
+            self.eval_env = FFmpegVideoRecorder(
+                FlattenObservation(gym.make(env_name, render_mode="rgb_array")),
+                video_folder=str(self.video_log_path.resolve()),
+                fps=4,
+            )
 
         self.default_batch_size = default_batch_size
         self.gamma = gamma
@@ -338,9 +351,7 @@ class BaseDQNAgent:
             if (path / "replay_buffer.pth").exists():
                 agent.replay_buffer.load(path)
             else:
-                raise FileNotFoundError(
-                    f"Replay buffer not found in {path}. there should be a `replay_buffer.pth` file."
-                )
+                raise FileNotFoundError(f"Replay buffer not found in {path}. there should be a `replay_buffer.pth` file.")
 
         return agent
 
