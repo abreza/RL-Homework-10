@@ -20,6 +20,7 @@ class BaseDQNAgent:
     def __init__(
         self,
         env_name,
+        env_config={},
         default_batch_size=64,
         replay_buffer_capacity=1000000,
         gamma=0.99,
@@ -42,10 +43,15 @@ class BaseDQNAgent:
         self.video_log_path.mkdir(parents=True, exist_ok=True)
 
         if env_name == "FrozenLake-v1":
-            desc = generate_random_map(size=16, seed=seed)
-            self.env = FlattenObservation(gym.make(env_name, desc=desc, map_name="8x8"))
+            size = 16
+            p = 0.6
+            if env_config is not None:
+                size = env_config.get("size", 16)
+                p = env_config.get("p", 0.6)
+            desc = generate_random_map(size=size, p=p, seed=seed)
+            self.env = FlattenObservation(gym.make(env_name, desc=desc))
             self.eval_env = FFmpegVideoRecorder(
-                FlattenObservation(gym.make(env_name, desc=desc, map_name="8x8", render_mode="rgb_array")),
+                FlattenObservation(gym.make(env_name, desc=desc, render_mode="rgb_array")),
                 video_folder=str(self.video_log_path.resolve()),
                 fps=4,
             )
