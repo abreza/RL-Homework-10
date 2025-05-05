@@ -60,7 +60,7 @@ class BaseDQNAgent:
             self.eval_env = FFmpegVideoRecorder(
                 FlattenObservation(gym.make(env_name, render_mode="rgb_array")),
                 video_folder=str(self.video_log_path.resolve()),
-                fps=4,
+                fps=30,
             )
 
         self.default_batch_size = default_batch_size
@@ -102,6 +102,7 @@ class BaseDQNAgent:
     def eval_mode(self):
         """
         Set the agent to evaluation mode.
+        Disables training-specific operations and sets networks to evaluation mode.
         """
         self.training = False
         self.q_network.eval()
@@ -115,6 +116,7 @@ class BaseDQNAgent:
     def train_mode(self):
         """
         Set the agent to training mode.
+        Enables training-specific operations and prepares the agent for learning.
         """
         self.training = True
         self.q_network.train()
@@ -125,15 +127,15 @@ class BaseDQNAgent:
 
     def add_experience(self, state, action, reward, next_state, done):
         """
-        Add an experience to the replay buffer.
+        Add a new experience to the replay buffer after preprocessing.
         """
         data = self._preprocess_add(state, action, reward, next_state, done)
         self.replay_buffer.add(**data)
 
     def act(self, state):
         """
-        Take an action given the current state.
-
+        Select an action based on the current state.
+        Updates observation statistics when in training mode.
         Args:
             state (np.ndarray): The current state.
         """
@@ -153,7 +155,7 @@ class BaseDQNAgent:
 
     def _step(self, reward):
         """
-        Step the agent with the given reward.
+        Process a timestep by logging the reward and updating internal counters.
         """
         self._rewards.append(reward)
         self._cur_rollout_step += 1
@@ -161,7 +163,7 @@ class BaseDQNAgent:
 
     def _episode(self):
         """
-        apply an episode
+        Process an episode: log performance metrics, update training statistics, and reset episode counters.
         """
         save_dict = self._wandb_train_episode_dict()
         if self.wandb_run is not None:
@@ -192,7 +194,7 @@ class BaseDQNAgent:
 
     def learn(self, batch_size=None):
         """
-        Learn from the replay buffer.
+        Perform a learning update using a batch of experiences from the replay buffer.
         """
         self._loss = None
         if not self.training:
@@ -240,7 +242,7 @@ class BaseDQNAgent:
         eval_every=10000,
     ):
         """
-        Train the agent.
+        Train the agent over multiple episodes, performing learning updates and periodic evaluations.
         """
         start_time = time.time()
         pre_evaluation_step = self._training_step
@@ -284,7 +286,7 @@ class BaseDQNAgent:
 
     def save(self, path, save_replay_buffer=True):
         """
-        Save the agent's state.
+        Save the agent's state, including networks, optimizer, and optionally the replay buffer.
         """
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
@@ -297,7 +299,8 @@ class BaseDQNAgent:
     @classmethod
     def load(cls, path, device="cuda" if torch.cuda.is_available() else "cpu", use_replay_buffer=True):
         """
-        Load the agent's state.
+        Load the agent's state from a saved checkpoint.
+        Restores networks, optimizer, and optionally the replay buffer from the specified path.
         """
         path = Path(path)
         if not path.exists():
@@ -362,6 +365,9 @@ class BaseDQNAgent:
         return agent
 
     def evaluate(self, video_name="video", max_steps=5000):
+        """
+        Evaluate the agent's policy in a dedicated environment, logging evaluation metrics.
+        """
         self.eval_mode()
         self.eval_env.action_space.seed(random.randint(0, 1e32 - 1))
         state, _ = self.eval_env.reset(video_name=video_name, seed=random.randint(0, 1e32 - 1))
@@ -387,7 +393,8 @@ class BaseDQNAgent:
 
     def _create_replay_buffer(self, max_size=1000000):
         """
-        Create a replay buffer for storing experiences.
+        Initialize the replay buffer for storing experiences.
+        This method should be implemented in child classes using the ReplayBuffer class.
         """
         self.replay_buffer = ...
         raise NotImplementedError(
@@ -396,7 +403,8 @@ class BaseDQNAgent:
 
     def _create_network(self):
         """
-        Create the neural network for the agent.
+        Initialize the neural network and target network for the agent.
+        This method should be implemented in child classes.
         """
         self.q_network = ...
         self.target_network = ...
@@ -406,42 +414,39 @@ class BaseDQNAgent:
 
     def _learnable_parameters(self):
         """
-        Return the learnable parameters of the agent.
+        Return the parameters of the Q-network that should be updated during training.
         """
         return self.q_network.parameters()
 
     def _create_optimizer(self):
         """
-        Create the optimizer for the agent.
+        Initialize the optimizer for updating the Q-network parameters.
         """
         self.optimizer = torch.optim.Adam(self._learnable_parameters(), lr=self.learning_rate)
 
     def _soft_update_target_network(self):
         """
-        Soft update the target network.
+        Perform a soft update of the target network parameters using the tau parameter.
         """
         for target_param, local_param in zip(self.target_network.parameters(), self.q_network.parameters()):
             target_param.data.copy_(self.tau * local_param.data + (1.0 - self.tau) * target_param.data)
 
     def _hard_update_target_network(self):
         """
-        Hard update the target network.
+        Copy the Q-network parameters to the target network (hard update).
         """
         self.target_network.load_state_dict(self.q_network.state_dict())
 
     def _compute_loss(self, batch: dict):
         """
-        Compute the loss for the given batch.
-
-        Args:
-            batch (dict): A batch of experiences.
+        Compute the loss for the given batch of experiences.
+        This method must be implemented in child classes.
         """
         raise NotImplementedError("Loss computation should be implemented in child classes.")
 
     def _preprocess_add(self, state, action, reward, next_state, done) -> dict:
         """
-        Preprocess the experience before adding it to the replay buffer.
-
+        Preprocess and convert the experience components into tensors before adding them to the replay buffer.
         Returns:
             dict: A dictionary containing the preprocessed experience.
         """
@@ -464,25 +469,27 @@ class BaseDQNAgent:
 
     def _act_in_training(self, state):
         """
-        Take an action in training mode.
+        Select an action in training mode.
+        This method should be implemented in child classes.
         """
         raise NotImplementedError("Action selection in training mode should be implemented in child classes.")
 
     def _act_in_eval(self, state):
         """
-        Take an action in evaluation mode.
+        Select an action in evaluation mode.
+        This method should be implemented in child classes.
         """
         raise NotImplementedError("Action selection in evaluation mode should be implemented in child classes.")
 
     def _wandb_train_step_dict(self):
         """
-        Create a dictionary for logging the training step.
+        Prepare a dictionary containing training step statistics for logging.
         """
         return {"train_step/loss": self._loss, "train_step/grad_norm": self.grad_norm}
 
     def _wandb_train_episode_dict(self):
         """
-        Create a dictionary for logging the training episode.
+        Prepare a dictionary containing episode training statistics for logging.
         """
         return {
             "train_episode/sum_loss": self._episode_loss,
@@ -496,7 +503,7 @@ class BaseDQNAgent:
 
     def _wandb_eval_dict(self):
         """
-        Create a dictionary for logging the evaluation.
+        Prepare a dictionary containing evaluation metrics for logging.
         """
         return {
             "eval_episode/sum_reward": sum(self._rewards),
@@ -508,7 +515,7 @@ class BaseDQNAgent:
 
     def _save_dict(self):
         """
-        Dictionary of the agent's state.
+        Compile and return the agent's state as a dictionary for saving.
         """
         save_dict = {
             "training": self.training,
@@ -556,7 +563,7 @@ class BaseDQNAgent:
 
     def _state_transformation(self, state):
         """
-        Preprocess state
+        Preprocess and normalize the input state to the range [-1, 1].
         """
         low = self.env.observation_space.low
         high = self.env.observation_space.high
@@ -577,7 +584,7 @@ class BaseDQNAgent:
 
     def _normalize_reward(self, rewards):
         """
-        Normalize the reward.
+        Normalize rewards using running statistics and clip them if necessary.
         """
         rewards = self._scale_reward(rewards)
         if not self._norm_rew:
