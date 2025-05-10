@@ -38,8 +38,9 @@ class PolicyModel(nn.Module, ABC):
         self.int_value = nn.Linear(256, 1)
         self.ext_value = nn.Linear(256, 1)
 
+        # Orthogonal initialization
         for layer in self.modules():
-            if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Linear):
+            if isinstance(layer, (nn.Conv2d, nn.Linear)):
                 nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))
                 layer.bias.data.zero_()
 
@@ -51,10 +52,13 @@ class PolicyModel(nn.Module, ABC):
         x = self.conv(x)
         x = F.relu(self.fc1(x))
         h = self.gru(x, hidden_state)
+
         x_v = h + F.relu(self.extra_value_fc(h))
         x_pi = h + F.relu(self.extra_policy_fc(h))
+
         int_value = self.int_value(x_v)
         ext_value = self.ext_value(x_v)
+
         policy_logits = self.policy(x_pi)
         probs = F.softmax(policy_logits, dim=1)
         dist = Categorical(probs)
@@ -66,22 +70,26 @@ class PolicyModel(nn.Module, ABC):
 class TargetModel(nn.Module, ABC):
     def __init__(self, state_shape):
         super(TargetModel, self).__init__()
-        # TODO: Students should define the architecture for the target network here.
-        # It typically consists of 3 convolutional layers followed by a linear layer to encoded features.
+        # === TODO: Implement Target Model architecture ===
+        # Define 3 convolutional layers followed by a fully connected layer.
+        # The output should be a 512-dimensional encoded feature vector.
         # Example:
         # self.conv1 = nn.Conv2d(...)
         # self.conv2 = nn.Conv2d(...)
         # self.conv3 = nn.Conv2d(...)
         # self.encoded_features = nn.Linear(...)
-        pass
+        
+        self._init_weights()  # Call this after defining layers
 
     def _init_weights(self):
-        # TODO: Students should initialize all convolutional and linear layers with orthogonal initialization.
-        # Use np.sqrt(2) as gain for most layers.
+        # === TODO: Initialize all layers with orthogonal weights ===
+        # For most layers use gain=np.sqrt(2).
+        # Call orthogonal_ on each conv and linear layer.
         pass
 
     def forward(self, inputs):
-        # TODO: Students should implement the forward pass for the target model.
+        # === TODO: Implement forward pass ===
+        # Normalize input, pass through conv layers, flatten, and return encoded features.
         pass
 
 
@@ -89,15 +97,20 @@ class TargetModel(nn.Module, ABC):
 class PredictorModel(nn.Module, ABC):
     def __init__(self, state_shape):
         super(PredictorModel, self).__init__()
-        # TODO: Students should define the architecture for the predictor network here.
-        # It should match the target model up to encoded features, with extra linear layers in between.
-        pass
+        # === TODO: Implement Predictor Model architecture ===
+        # It should match the target model up to encoded features,
+        # and then include 1 or 2 additional linear layers.
+        # End with a layer that outputs a 512-dim feature vector (same as TargetModel).
+        
+        self._init_weights()  # Call this after defining layers
 
     def _init_weights(self):
-        # TODO: Students should initialize all predictor model layers using orthogonal initialization.
-        # Include this method in the __init__ of the model to ensure weights are initialized.
+        # === TODO: Initialize all layers with orthogonal weights ===
+        # Use gain=np.sqrt(2) for hidden layers.
+        # Use gain=np.sqrt(0.01) if you want to slow learning on final output layer (optional).
         pass
 
     def forward(self, inputs):
-        # TODO: Students should implement the forward pass for the predictor model.
+        # === TODO: Implement forward pass ===
+        # Normalize input, pass through conv layers and extra FC layers, then return final encoded vector.
         pass

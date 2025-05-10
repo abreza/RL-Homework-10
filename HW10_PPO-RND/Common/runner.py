@@ -3,26 +3,27 @@ import numpy as np
 from Common.utils import make_env
 
 class Worker(Process):
-    def __init__(self, id, conn, **config):
-        super(Worker, self).__init__()
-        self.id = id
+    def __init__(self, worker_id, conn, **config):
+        super().__init__()
+        self.id = worker_id
         self.conn = conn
         self.config = config
-        self.env_name = config["env_name"]
-        self.max_episode_steps = config["max_frames_per_episode"]
-        self.render_mode = config.get("render", False)
-        self.env = make_env(self.env_name, self.max_episode_steps)()
-        self.reset()
+        self.env = make_env(config["env_name"], config["max_frames_per_episode"])()
+        self.max_steps = config["max_frames_per_episode"]
+        self.render_enabled = config.get("render", False)
 
-    def reset(self):
+        self.reset_env()
+
+    def reset_env(self):
         obs = self.env.reset()
-        if isinstance(obs, tuple):  # Gym >= 0.26
-            obs, _ = obs
+        if isinstance(obs, tuple):  # Gym >= 0.26 compatibility
+            obs = obs[0]
         self.obs = obs
         self.steps = 0
 
     def render(self):
-        self.env.render()
+        if self.render_enabled:
+            self.env.render()
 
     def run(self):
         while True:
@@ -30,21 +31,16 @@ class Worker(Process):
             action = self.conn.recv()
 
             next_obs, reward, terminated, truncated, info = self.env.step(action)
-            done = terminated or truncated
+            done = terminated or truncated or (self.steps >= self.max_steps)
             self.steps += 1
 
-            if self.steps >= self.max_episode_steps:
-                done = True
+            if isinstance(next_obs, tuple):  # Gym >= 0.26 compatibility
+                next_obs = next_obs[0]
 
-            if self.render_mode:
-                self.render()
-
-            if isinstance(next_obs, tuple):  # Gym >= 0.26
-                next_obs, _ = next_obs
-
+            self.render()
             self.conn.send((next_obs, reward, done, info))
 
             if done:
-                self.reset()
+                self.reset_env()
             else:
                 self.obs = next_obs
