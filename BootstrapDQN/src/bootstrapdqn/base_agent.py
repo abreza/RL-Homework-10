@@ -567,6 +567,8 @@ class BaseDQNAgent:
         """
         low = self.env.observation_space.low
         high = self.env.observation_space.high
+        if np.any(np.isinf(low)) or np.any(np.isinf(high)):
+            return torch.tensor(state, dtype=torch.float32, device=self.device)
 
         # Avoid division by zero if high == low
         scale = high - low
