@@ -11,6 +11,9 @@ from Common.utils import set_random_seeds
 from Common.play import Play
 from tqdm import tqdm
 
+if not hasattr(np, 'bool8'):
+    np.bool8 = np.bool_
+
 def extract_image(obs_dict):
     """Extracts and formats observation image as [C, H, W]."""
     image = obs_dict['image'] if isinstance(obs_dict, dict) else obs_dict[0]['image']
