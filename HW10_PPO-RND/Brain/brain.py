@@ -57,6 +57,11 @@ class Brain:
         # Compute squared error (MSE) between predicted and target features
         # Take mean over feature dimension (dim=1)
         int_reward = None  # Replace this with prediction error computation
+        with torch.no_grad():
+            target = self.target_model(norm_obs)
+            pred = self.predictor_model(norm_obs)
+            loss = (pred - target) ** 2
+            int_reward = torch.mean(loss, dim=1).cpu().numpy()
 
         return int_reward  # → np.array
 
@@ -154,12 +159,22 @@ class Brain:
         # === TODO: RND Loss Computation ===
         # Use predictor_model and target_model on obs to compute prediction error
         # Compute squared error, apply dropout mask using config["predictor_proportion"]
-        # Reduce the loss to a scalar value
-        target = None
-        pred = None
-        loss = None
-        mask = None
-        final_loss = None
+        # Reduce the loss to a scalar value        
+        target = self.target_model(obs / 255.0)
+        pred = self.predictor_model(obs / 255.0)
+        loss = (pred - target) ** 2
+        mask = torch.zeros_like(loss)
+        
+        batch_size, n_features = loss.shape
+        n_masked_features = int(n_features * self.config["predictor_proportion"])
+        
+        for i in range(batch_size):
+            indices = torch.randperm(n_features)[:n_masked_features]
+            mask[i, indices] = 1.0
+        
+        masked_loss = loss * mask
+        
+        final_loss = torch.sum(masked_loss) / (batch_size * n_masked_features)
         return final_loss
 
     def set_from_checkpoint(self, checkpoint):
