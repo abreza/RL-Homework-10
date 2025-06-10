@@ -152,7 +152,12 @@ class Brain:
             rnd_losses.append(rnd_loss.item())
             entropies.append(entropy.item())
 
-        return pg_losses, ext_v_losses, int_v_losses, rnd_losses, entropies, int_values, int_returns, ext_values, ext_returns
+        int_values_np = np.array(int_values) if isinstance(int_values, (list, tuple)) else int_values
+        ext_values_np = np.array(ext_values) if isinstance(ext_values, (list, tuple)) else ext_values
+        int_returns_np = int_returns.cpu().numpy() if torch.is_tensor(int_returns) else np.array(int_returns)
+        ext_returns_np = ext_returns.cpu().numpy() if torch.is_tensor(ext_returns) else np.array(ext_returns)
+        
+        return pg_losses, ext_v_losses, int_v_losses, rnd_losses, entropies, int_values_np, int_returns_np, ext_values_np, ext_returns_np
 
     def calculate_rnd_loss(self, obs):
         # === TODO: RND Loss Computation ===
